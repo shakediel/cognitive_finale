@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from pddlsim.local_simulator import LocalSimulator
 from pddlsim.planner import local
 from pddlsim.services.perception import Perception
@@ -28,7 +30,11 @@ actions = parser.actions
 goal_states = get_goal_states(parser.goals, states)
 
 distances_from_goals = get_distances_from_goals(goal_states, states, valid_actions_getter, parser)
-
-
+state_discovery_reward = defaultdict(float)
+for state_index in distances_from_goals:
+    state_discovery_reward[state_index] = 0
+    state_distances = distances_from_goals[state_index]
+    for goal_index in state_distances:
+        state_discovery_reward[state_index] += 1. / state_distances[goal_index]
 
 print(LocalSimulator(local).run(domain_path, problem_path, My_Executer()))
