@@ -1,5 +1,7 @@
 import copy
+from collections import defaultdict
 from collections import deque
+from functools import partial
 
 
 def my_apply_action_to_state(orig_state, action, parser):
@@ -47,3 +49,27 @@ def get_goal_states(goal_conditions, states):
             if goal_condition.test(state):
                 goal_states.append(state)
     return goal_states
+
+
+def get_distances_from_goals(goal_states, states, valid_actions_getter, parser):
+    goal_distances = defaultdict(partial(defaultdict, int))
+    for goal_state in goal_states:
+        goal_state_index = states.index(goal_state)
+        goal_distances[goal_state_index][goal_state_index] = 1
+
+        queue = deque()
+        queue.append(goal_state)
+        visited_states = list()
+        visited_states.append(goal_state)
+        while queue:
+            curr_state = queue.popleft()
+            curr_state_valid_actions = valid_actions_getter.get(curr_state)
+            curr_state_index = states.index(curr_state)
+            for action in curr_state_valid_actions:
+                next_state = my_apply_action_to_state(curr_state, action, parser)
+                if next_state not in visited_states:
+                    queue.append(next_state)
+                    visited_states.append(next_state)
+                    goal_distances[states.index(next_state)][goal_state_index] = goal_distances[curr_state_index][goal_state_index] + 1
+
+    return goal_distances
