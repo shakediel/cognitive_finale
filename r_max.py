@@ -1,7 +1,9 @@
+import os
 import random
 from collections import defaultdict
 from functools import partial
 
+import pickle
 from pddlsim.executors.executor import Executor
 
 from my_valid_actions_getter import MyValidActionsGetter
@@ -13,6 +15,8 @@ class My_Executer(Executor):
         self.services = None
 
         self.problem_path = problem_path
+        self.env_name = self.problem_path.split('-')[0]
+
         self.states = states
         self.actions = actions
         self.goal_states = goal_states
@@ -31,8 +35,8 @@ class My_Executer(Executor):
 
         self.rewards = defaultdict(partial(defaultdict, list))
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))  # S --> A --> S' --> counts
-        self.r_s_a_counts = defaultdict(partial(defaultdict, int))  # S --> A --> #rs
-        self.t_s_a_counts = defaultdict(partial(defaultdict, int))  # S --> A --> #ts
+        self.state_action_rewards_count = defaultdict(partial(defaultdict, int))  # S --> A --> #rs
+        self.state_action_transition_count = defaultdict(partial(defaultdict, int))  # S --> A --> #ts
 
         self.valid_actions_getter = None
 
@@ -42,10 +46,23 @@ class My_Executer(Executor):
 
         #todo: add load
 
+        if os.path.exists(self.env_name + "_transitions"):
+            self.transitions = self.load_obj(self.env_name + "_transitions")
+        if os.path.exists(self.env_name + "_state_action_transition_count"):
+            self.state_action_transition_count = self.load_obj(self.env_name + "_state_action_transition_count")
+        if os.path.exists(self.problem_path + "_rewards"):
+            self.rewards = self.load_obj(self.problem_path + "_rewards")
+        if os.path.exists(self.problem_path + "_state_action_rewards_count"):
+            self.state_action_rewards_count = self.load_obj(self.problem_path + "_state_action_rewards_count")
+
     #todo: limit num of iterations??
     def next_action(self, state=None):
         if self.services.goal_tracking.reached_all_goals():
             #todo: add save
+            self.save_obj(self.transitions, self.env_name + "_transitions")
+            self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
+            self.save_obj(self.rewards, self.problem_path + "_rewards")
+            self.save_obj(self.state_action_rewards_count, self.problem_path + "_state_action_rewards_count")
             return None
 
         if state is None:
@@ -54,7 +71,7 @@ class My_Executer(Executor):
         reward = 0
         if self.prev_state_valid_actions is not None:
             if not any(self.prev_action in action for action in self.prev_state_valid_actions):
-                reward += self.bad_action_punish
+                reward -= self.bad_action_punish
         else:
             if state in self.visited_states:
                 reward -= self.state_recurrence_punish
@@ -64,9 +81,16 @@ class My_Executer(Executor):
 
         action_name = self.choose(state, reward)
 
+        self.prev_state = state
+        self.prev_action = action_name
+        self.prev_state_valid_actions = self.valid_actions_getter.get(state)
 
+        if not any(action_name in action for action in self.prev_state_valid_actions):
+            return self.next_action(state)
 
-        t=9
+        action = next(action for action in self.prev_state_valid_actions if action_name in action)
+
+        return action
 
     def choose(self, state, reward):
         self.update(self.prev_state, self.prev_action, reward, state)
@@ -83,13 +107,13 @@ class My_Executer(Executor):
             state_index = self.states.index(state)
             next_state_index = self.states.index(next_state)
 
-            if self.r_s_a_counts[state_index][action] <= self.known_threshold:
+            if self.state_action_rewards_count[state_index][action] <= self.known_threshold:
                 self.rewards[state_index][action] += [reward]
-                self.r_s_a_counts[state_index][action] += 1
+                self.state_action_rewards_count[state_index][action] += 1
 
-            if self.t_s_a_counts[state_index][action] <= self.known_threshold:
+            if self.state_action_transition_count[state_index][action] <= self.known_threshold:
                 self.transitions[state_index][action][next_state_index] += 1
-                self.t_s_a_counts[state_index][action] += 1
+                self.state_action_transition_count[state_index][action] += 1
 
     def get_max_q_action(self, state, lookahead):
         return self._compute_max_qval_action_pair(state, lookahead)[1]
@@ -124,18 +148,18 @@ class My_Executer(Executor):
 
     def _compute_exp_future_return(self, state, action, lookahead):
         state_index = self.states.index(state)
-        next_action_state_occurence = self.t_s_a_counts[state_index][action]
+        next_action_state_occurence = self.state_action_transition_count[state_index][action]
 
+        next_state_occurence_dict = self.transitions[self.states.index(state)][action]
         state_weights = defaultdict(float)
         if next_action_state_occurence >= self.known_threshold:
-            next_state_occurence_dict = self.transitions[self.states.index(state)][action]
             normal = float(sum(next_state_occurence_dict.values()))
-            for next_state in next_state_occurence_dict.keys():
+            for next_state in next_state_occurence_dict:
                 count = next_state_occurence_dict[next_state]
                 state_weights[next_state] = (count / normal)
         else:
-            for next_state in self.states:
-                state_weights[self.states.index(next_state)] = 1
+            for next_state in next_state_occurence_dict:
+                state_weights[next_state] = 1
 
         weighted_future_returns = list()
         for state_index in state_weights:
@@ -145,8 +169,15 @@ class My_Executer(Executor):
 
     def _get_reward(self, state, action):
         state_index = self.states.index(state)
-        if self.r_s_a_counts[state_index][action] >= self.known_threshold:
+        if self.state_action_rewards_count[state_index][action] >= self.known_threshold:
             rewards_s_a = self.rewards[state_index][action]
             return float(sum(rewards_s_a)) / len(rewards_s_a)
         else:
             return self.max_reward
+
+    def save_obj(self, obj, name):
+        pickle.dump(obj, open(name, 'w'))
+
+    def load_obj(self, name):
+        return pickle.load(open(name))
+
