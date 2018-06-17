@@ -13,6 +13,8 @@ class My_Executer(Executor):
     def __init__(self, problem_path, states, actions, goal_states, state_discovery_reward, max_reward, state_recurrence_punish, bad_action_punish, lookahead, known_threshold):
         super(My_Executer, self).__init__()
         self.services = None
+        self.time = 0
+        self.route = set()
 
         self.problem_path = problem_path
         self.env_name = self.problem_path.split('-')[0]
@@ -34,17 +36,15 @@ class My_Executer(Executor):
         self.prev_state_valid_actions = None
 
         self.rewards = defaultdict(partial(defaultdict, list))
-        self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))  # S --> A --> S' --> counts
-        self.state_action_rewards_count = defaultdict(partial(defaultdict, int))  # S --> A --> #rs
-        self.state_action_transition_count = defaultdict(partial(defaultdict, int))  # S --> A --> #ts
+        self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
+        self.state_action_rewards_count = defaultdict(partial(defaultdict, int))
+        self.state_action_transition_count = defaultdict(partial(defaultdict, int))
 
         self.valid_actions_getter = None
 
     def initialize(self, services):
         self.services = services
         self.valid_actions_getter = MyValidActionsGetter(self.services.parser, self.services.perception)
-
-        #todo: add load
 
         if os.path.exists(self.env_name + "_transitions"):
             self.transitions = self.load_obj(self.env_name + "_transitions")
@@ -55,15 +55,21 @@ class My_Executer(Executor):
         if os.path.exists(self.problem_path + "_state_action_rewards_count"):
             self.state_action_rewards_count = self.load_obj(self.problem_path + "_state_action_rewards_count")
 
+        num_known_sa = self.get_num_known_sa()
+        if num_known_sa == len(self.states) * len(self.actions):
+            t=9
+
     #todo: limit num of iterations??
     def next_action(self, state=None):
-        if self.services.goal_tracking.reached_all_goals():
-            #todo: add save
+        if self.services.goal_tracking.reached_all_goals() or self.time >= len(self.states) * len(self.actions) * len(self.actions):
+            self.reward_route(self.services.goal_tracking.reached_all_goals())
             self.save_obj(self.transitions, self.env_name + "_transitions")
             self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
             self.save_obj(self.rewards, self.problem_path + "_rewards")
             self.save_obj(self.state_action_rewards_count, self.problem_path + "_state_action_rewards_count")
             return None
+
+        self.time += 1
 
         if state is None:
             state = self.services.perception.get_state()
@@ -90,6 +96,8 @@ class My_Executer(Executor):
 
         action = next(action for action in self.prev_state_valid_actions if action_name in action)
 
+        self.route.add(tuple([self.states.index(state), action_name]))
+
         return action
 
     def choose(self, state, reward):
@@ -107,13 +115,11 @@ class My_Executer(Executor):
             state_index = self.states.index(state)
             next_state_index = self.states.index(next_state)
 
-            if self.state_action_rewards_count[state_index][action] <= self.known_threshold:
-                self.rewards[state_index][action] += [reward]
-                self.state_action_rewards_count[state_index][action] += 1
+            self.rewards[state_index][action] += [reward]
+            self.state_action_rewards_count[state_index][action] += 1
 
-            if self.state_action_transition_count[state_index][action] <= self.known_threshold:
-                self.transitions[state_index][action][next_state_index] += 1
-                self.state_action_transition_count[state_index][action] += 1
+            self.transitions[state_index][action][next_state_index] += 1
+            self.state_action_transition_count[state_index][action] += 1
 
     def get_max_q_action(self, state, lookahead):
         return self._compute_max_qval_action_pair(state, lookahead)[1]
@@ -180,4 +186,24 @@ class My_Executer(Executor):
 
     def load_obj(self, name):
         return pickle.load(open(name))
+
+    def is_known(self, s, a):
+        return self.state_action_transition_count[s][a] >= self.known_threshold
+
+    def get_num_known_sa(self):
+        count = 0
+        for state in self.states:
+            for action_name in self.actions:
+                if self.state_action_transition_count[self.states.index(state)][action_name] >= self.known_threshold:
+                    count += 1
+        return count
+
+    def reward_route(self, reached_all_goals):
+        if not reached_all_goals:
+            return
+
+        for state_action_tuple in self.route:
+            self.rewards[state_action_tuple[0]][state_action_tuple[1]] += [self.max_reward]
+
+
 
