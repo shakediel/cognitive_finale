@@ -24,9 +24,8 @@ valid_actions_getter = MyValidActionsGetter(parser, perception)
 
 root_state = perception.get_state()
 
-
 states = get_all_states(root_state, valid_actions_getter, parser)
-actions = parser.actions
+actions = [action for action in parser.actions]
 goal_states = get_goal_states(parser.goals, states)
 
 distances_from_goals = get_distances_from_goals(goal_states, states, valid_actions_getter, parser)
@@ -37,4 +36,12 @@ for state_index in distances_from_goals:
     for goal_index in state_distances:
         state_discovery_reward[state_index] += 1. / state_distances[goal_index]
 
-print(LocalSimulator(local).run(domain_path, problem_path, My_Executer()))
+max_reward = len(goal_states) * max(state_discovery_reward.values())
+state_recurrence_punish = min(state_discovery_reward.values())
+bad_action_punish = max(state_discovery_reward.values())
+lookahead = 4
+known_threshold = len(states) * len(actions)
+
+print(LocalSimulator(local).run(domain_path, problem_path,
+    My_Executer(problem_path, states, actions, goal_states, state_discovery_reward, max_reward, state_recurrence_punish,
+                bad_action_punish, lookahead, known_threshold)))
