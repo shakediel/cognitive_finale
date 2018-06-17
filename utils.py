@@ -1,4 +1,5 @@
 import copy
+from collections import deque
 
 
 def my_apply_action_to_state(orig_state, action, parser):
@@ -21,5 +22,28 @@ def my_apply_action_to_state(orig_state, action, parser):
     return state
 
 
-def get_all_states(root_state):
-    pass
+def get_all_states(root_state, valid_actions_getter, parser):
+    states = list()
+    queue = deque()
+    queue.append(root_state)
+    states.append(root_state)
+
+    while queue:
+        curr_state = queue.popleft()
+        curr_state_valid_actions = valid_actions_getter.get(curr_state)
+        for action in curr_state_valid_actions:
+            next_state = my_apply_action_to_state(curr_state, action, parser)
+            if next_state not in states:
+                states.append(next_state)
+                queue.append(next_state)
+
+    return states
+
+
+def get_goal_states(goal_conditions, states):
+    goal_states = list()
+    for goal_condition in goal_conditions:
+        for state in states:
+            if goal_condition.test(state):
+                goal_states.append(state)
+    return goal_states
