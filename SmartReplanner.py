@@ -3,6 +3,7 @@ from pddlsim.planner import local
 from pddlsim.local_simulator import LocalSimulator
 import sys
 
+
 class SmartReplanner(Executor):
     def __init__(self):
         super(SmartReplanner, self).__init__()
