@@ -13,7 +13,6 @@ class My_Executer(Executor):
     def __init__(self, problem_path, states, actions, goal_states, state_discovery_reward, max_reward, state_recurrence_punish, bad_action_punish, lookahead, known_threshold):
         super(My_Executer, self).__init__()
         self.services = None
-        self.time = 0
         self.route = set()
 
         self.problem_path = problem_path
@@ -61,15 +60,13 @@ class My_Executer(Executor):
 
     #todo: limit num of iterations??
     def next_action(self, state=None):
-        if self.services.goal_tracking.reached_all_goals() or self.time >= len(self.states) * len(self.actions) * len(self.actions):
+        if self.services.goal_tracking.reached_all_goals():
             self.reward_route(self.services.goal_tracking.reached_all_goals())
             self.save_obj(self.transitions, self.env_name + "_transitions")
             self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
             self.save_obj(self.rewards, self.problem_path + "_rewards")
             self.save_obj(self.state_action_rewards_count, self.problem_path + "_state_action_rewards_count")
             return None
-
-        self.time += 1
 
         if state is None:
             state = self.services.perception.get_state()
