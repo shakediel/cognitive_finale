@@ -2,6 +2,8 @@ import copy
 from collections import defaultdict
 from collections import deque
 from functools import partial
+import hashlib
+import json
 
 
 def my_apply_action_to_state(orig_state, action, parser):
@@ -73,3 +75,8 @@ def get_distances_from_goals(goal_states, states, valid_actions_getter, parser):
                     goal_distances[states.index(next_state)][goal_state_index] = goal_distances[curr_state_index][goal_state_index] + 1
 
     return goal_distances
+
+
+def encode_state(state):
+    json_representation = json.dumps(state, sort_keys=True)
+    return hashlib.sha1(json_representation).hexdigest()
