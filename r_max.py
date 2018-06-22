@@ -58,7 +58,6 @@ class My_Executer(Executor):
         if num_known_sa == len(self.states) * len(self.actions):
             t=9
 
-    #todo: limit num of iterations??
     def next_action(self, state=None):
         if self.services.goal_tracking.reached_all_goals():
             self.reward_route(self.services.goal_tracking.reached_all_goals())
