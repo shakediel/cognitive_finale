@@ -9,7 +9,7 @@ from pddlsim.local_simulator import LocalSimulator
 import sys
 
 from my_valid_actions_getter import MyValidActionsGetter
-from utils import my_apply_action_to_state, make_nested_hash
+from utils import my_apply_action_to_state, encode_state
 
 
 class StochasticSmartReplanner(Executor):
@@ -21,7 +21,7 @@ class StochasticSmartReplanner(Executor):
         self.services = None
         self.plan = None
 
-        self.visited_states = list()
+        self.hash_visited_states = set()
         self.prev_state = None
         self.prev_action = None
 
@@ -56,9 +56,10 @@ class StochasticSmartReplanner(Executor):
 
         # remember
         state = self.services.perception.get_state()
-        if state not in self.visited_states:
-            self.visited_states.append(state)
-        self.update(self.prev_state, self.prev_action, state)
+        hash_state = encode_state(state)
+        if hash_state not in self.hash_visited_states:
+            self.hash_visited_states.add(encode_state(state))
+        # self.update(self.prev_state, self.prev_action, state)
 
 
         # choose
@@ -66,9 +67,9 @@ class StochasticSmartReplanner(Executor):
         possible_next_states = defaultdict(None)
         for applicable_action in applicable_actions:
             next_state = my_apply_action_to_state(state, applicable_action, self.services.parser)
-            possible_next_states[applicable_action] = next_state
+            possible_next_states[applicable_action] = encode_state(next_state)
 
-        not_seen_states_actions = filter(lambda action_key: possible_next_states[action_key] not in self.visited_states, possible_next_states)
+        not_seen_states_actions = filter(lambda action_key: possible_next_states[action_key] not in self.hash_visited_states, possible_next_states)
 
         if len(not_seen_states_actions) == 0:
             self.prev_state = state

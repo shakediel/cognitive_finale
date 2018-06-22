@@ -80,7 +80,14 @@ def get_distances_from_goals(goal_states, states, valid_actions_getter, parser):
 
 
 def encode_state(state):
-    json_representation = json.dumps(state, sort_keys=True)
+    copied_state = copy.deepcopy(state)
+    for key in state:
+        val = copied_state[key]
+        if isinstance(val, (set)):
+            copied_state[key] = list(val)
+            copied_state[key].sort()
+
+    json_representation = json.dumps(copied_state, sort_keys=True)
     return hashlib.sha1(json_representation).hexdigest()
 
 
