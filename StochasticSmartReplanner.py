@@ -35,7 +35,7 @@ class StochasticSmartReplanner(Executor):
         self.uncompleted_goals = None
         self.active_goal = None
 
-        self.weights = defaultdict(partial(defaultdict, int))
+        self.weights = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         # self.weights = defaultdict(float)
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         self.state_action_transition_count = defaultdict(partial(defaultdict, int))
@@ -109,7 +109,6 @@ class StochasticSmartReplanner(Executor):
             self.prev_action = self.plan.pop(0).lower()
             return self.prev_action
 
-
         return None
 
     def update(self, state_hash, action, next_state_hash):
@@ -132,7 +131,7 @@ class StochasticSmartReplanner(Executor):
             self.active_goal = None
             self.hash_visited_states = set()
             self.plan = None
-            self.weights = defaultdict(partial(defaultdict, int))
+            self.weights = defaultdict(partial(defaultdict, partial(defaultdict, int)))
 
     def make_plan(self, state):
         curr_state = copy.deepcopy(state)
@@ -144,15 +143,17 @@ class StochasticSmartReplanner(Executor):
 
         for action in self.plan:
             curr_state_hash = encode_state(curr_state)
-            self.weights[curr_state_hash][action.lower()] = 1
-            curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
+            expected_next_state = my_apply_action_to_state(curr_state, action, self.services.parser)
+            self.weights[curr_state_hash][action.lower()][encode_state(expected_next_state)] = 1
+            curr_state = expected_next_state
 
     def choose(self, state):
         action = self.get_max_q_action(state, self.lookahead)
         return action
 
     def get_max_q_action(self, state, lookahead):
-        prev_action_weight = self.weights[self.prev_state_hash][self.prev_action]
+        # expected_next_state = my_apply_action_to_state(self.prev_state)
+        prev_action_weight = max(self.weights[self.prev_state_hash][self.prev_action].values())
         return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
     def _compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
@@ -161,9 +162,12 @@ class StochasticSmartReplanner(Executor):
         actions = self.valid_actions_getter.get(state)
         for action in actions:
             # expansion...
+            # todo: only expand if next expected state was not seen
             edge_weight = prev_action_weight * self.off_plan_punish_factor
-            if self.weights[state_hash][action] == 0 or self.weights[state_hash][action] < edge_weight:
-                self.weights[state_hash][action] = edge_weight
+            expected_next_state = my_apply_action_to_state(state, action, self.services.parser)
+            expected_next_state_hash = encode_state(expected_next_state)
+            if self.weights[state_hash][action][expected_next_state_hash] == 0 or self.weights[state_hash][action][expected_next_state_hash] < edge_weight:
+                self.weights[state_hash][action][expected_next_state_hash] = edge_weight
 
             q_s_a = self.get_q_value(state, action, lookahead)
             predicted_returns[action] = q_s_a
@@ -196,14 +200,14 @@ class StochasticSmartReplanner(Executor):
 
         for next_state_hash in next_state_occurence_dict:
             count = next_state_occurence_dict[next_state_hash]
-            if count == 0:
-                state_probabilities[next_state_hash] = 1
-            else:
-                state_probabilities[next_state_hash] = (count / next_action_state_occurence)
+            # if count == 0:
+            #     state_probabilities[next_state_hash] = 1
+            # else:
+            state_probabilities[next_state_hash] = (count / next_action_state_occurence)
 
         weighted_future_returns = list()
         for state_hash in state_probabilities:
-            prev_action_weight = self.weights[state_hash][action]
+            prev_action_weight = max(self.weights[state_hash][action].values())
             next_state = my_apply_action_to_state(state, action, self.services.parser)
             weighted_future_returns.append(self.get_max_q_value(next_state, lookahead - 1, prev_action_weight) * state_probabilities[state_hash])
 
@@ -214,12 +218,13 @@ class StochasticSmartReplanner(Executor):
 
     def _get_reward(self, state, action):
         state_hash = encode_state(state)
-        reward = self.weights[state_hash][action]
+        reward = max(self.weights[state_hash][action].values())
         return reward
 
 
 domain_path = "domain.pddl"
-problem_path = "t_5_5_5_multiple.pddl"
+# problem_path = "t_5_5_5_multiple.pddl"
+problem_path = "ahinoam_problem.pddl"
 # problem_path = "failing_actions_example.pddl"
 # domain_path = "freecell_domain.pddl"
 # problem_path = "freecell_problem.pddl"
