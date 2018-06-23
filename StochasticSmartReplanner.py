@@ -19,13 +19,19 @@ class StochasticSmartReplanner(Executor):
         self.env_name = self.problem_path.split('-')[0]
 
         self.services = None
+
         self.plan = None
+        self.is_off_plan = True
+        self.steps_off_plan = None
 
         self.hash_visited_states = set()
-        self.prev_state = None
+        self.prev_state_hash = None
         self.prev_action = None
+        self.uncompleted_goals = None
+        self.active_goal = None
 
-        self.weights = defaultdict(partial(defaultdict, list))
+        # self.weights = defaultdict(partial(defaultdict, list))
+        self.weights = defaultdict(float)
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         self.state_action_transition_count = defaultdict(partial(defaultdict, int))
 
@@ -34,6 +40,7 @@ class StochasticSmartReplanner(Executor):
     def initialize(self, services):
         self.services = services
         self.valid_actions_getter = MyValidActionsGetter(self.services.parser, self.services.perception)
+        self.uncompleted_goals = self.services.goal_tracking.uncompleted_goals
 
         if os.path.exists(self.env_name + "_transitions"):
             self.transitions = self.load_obj(self.env_name + "_transitions")
@@ -43,23 +50,21 @@ class StochasticSmartReplanner(Executor):
             self.weights = self.load_obj(self.problem_path + "_weights")
 
     def next_action(self):
-        if self.services.goal_tracking.reached_all_goals():
+        state = self.services.perception.get_state()
+        hash_state = encode_state(state)
+
+        # check if done
+        self.check_goals(state)
+        if len(self.uncompleted_goals) == 0:
             self.save_obj(self.transitions, self.env_name + "_transitions")
             self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
             self.save_obj(self.weights, self.problem_path + "_weights")
             return None
 
-        if self.plan is not None:
-            if len(self.plan) > 0:
-                return self.plan.pop(0).lower()
-            return None
-
         # remember
-        state = self.services.perception.get_state()
-        hash_state = encode_state(state)
         if hash_state not in self.hash_visited_states:
             self.hash_visited_states.add(encode_state(state))
-        # self.update(self.prev_state, self.prev_action, state)
+        self.update(self.prev_state_hash, self.prev_action, hash_state)
 
 
         # choose
@@ -69,41 +74,68 @@ class StochasticSmartReplanner(Executor):
             next_state = my_apply_action_to_state(state, applicable_action, self.services.parser)
             possible_next_states[applicable_action] = encode_state(next_state)
 
-        not_seen_states_actions = filter(lambda action_key: possible_next_states[action_key] not in self.hash_visited_states, possible_next_states)
+        actions_leading_to_not_seen_states = filter(lambda action_key: possible_next_states[action_key] not in self.hash_visited_states, possible_next_states)
 
-        if len(not_seen_states_actions) == 0:
-            self.prev_state = state
+        # todo: this is not a good option, but i dont think theres any choice here - backtrack?
+        if len(actions_leading_to_not_seen_states) == 0:
+            self.prev_state_hash = state
             self.prev_action = None
             return None
 
-        if len(not_seen_states_actions) == 1:
-            self.prev_state = state
-            self.prev_action = not_seen_states_actions.pop(0)
+        if len(actions_leading_to_not_seen_states) == 1:
+            self.prev_state_hash = hash_state
+            self.prev_action = actions_leading_to_not_seen_states.pop(0)
+            return self.prev_action
+
+        if self.plan is None:
+            self.make_plan()
+
+        if len(self.plan) > 0:
+            self.prev_action = self.plan.pop(0).lower()
             return self.prev_action
 
 
 
-        problem_path = self.services.problem_generator.generate_problem(
-            self.services.goal_tracking.uncompleted_goals[0], self.services.perception.get_state())
-        self.plan = self.services.planner(self.services.pddl.domain_path, problem_path)
 
-        if len(self.plan) > 0:
-            return self.plan.pop(0).lower()
+
         return None
 
-    def update(self, state, action, next_state):
-        if state is not None and action is not None:
-            state_index = self.states.index(state)
-            next_state_index = self.states.index(next_state)
-
-            self.transitions[state_index][action][next_state_index] += 1
-            self.state_action_transition_count[state_index][action] += 1
+    def update(self, state_hash, action, next_state_hash):
+        if state_hash is not None and action is not None:
+            self.transitions[state_hash][action][next_state_hash] += 1
+            self.state_action_transition_count[state_hash][action] += 1
 
     def save_obj(self, obj, name):
         pickle.dump(obj, open(name, 'w'))
 
     def load_obj(self, name):
         return pickle.load(open(name))
+
+    def check_goals(self, state):
+        for goal_condition in self.uncompleted_goals:
+            if goal_condition.test(state):
+                self.uncompleted_goals.remove(goal_condition)
+
+        if self.active_goal is not None and self.active_goal.test(state):
+            self.active_goal = None
+            self.hash_visited_states = set()
+            self.plan = None
+
+    def make_plan(self):
+        if self.active_goal is None:
+            self.active_goal = self.uncompleted_goals[0]
+
+        problem_path = self.services.problem_generator.generate_problem(
+            self.active_goal, self.services.perception.get_state())
+        self.plan = self.services.planner(self.services.pddl.domain_path, problem_path)
+
+        for action in self.plan:
+            self.weights[action] = 1
+
+
+
+
+
 
 
 domain_path = "domain.pddl"

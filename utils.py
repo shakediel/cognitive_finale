@@ -89,26 +89,3 @@ def encode_state(state):
 
     json_representation = json.dumps(copied_state, sort_keys=True)
     return hashlib.sha1(json_representation).hexdigest()
-
-
-def make_nested_hash(o):
-    """
-    Makes a hash from a dictionary, list, tuple or set to any level, that contains
-    only other hashable types (including any lists, tuples, sets, and
-    dictionaries).
-    """
-    if isinstance(o, (set, tuple, list)):
-        return tuple([make_nested_hash(e) for e in o])
-
-    elif not isinstance(o, dict):
-        return hash(o)
-
-    new_o = copy.deepcopy(o)
-    for k, v in new_o.items():
-        new_o[k] = make_nested_hash(v)
-
-    ordered_dict = defaultdict(None)
-    for key in sorted(new_o):
-        ordered_dict[key] = new_o[key]
-
-    return hash(tuple(frozenset(sorted(new_o.items()))))
