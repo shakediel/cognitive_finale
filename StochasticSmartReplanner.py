@@ -15,9 +15,9 @@ from utils import my_apply_action_to_state, encode_state
 
 
 class StochasticSmartReplanner(Executor):
-    def __init__(self, problem_path):
+    def __init__(self, problem_name):
         super(StochasticSmartReplanner, self).__init__()
-        self.problem_path = problem_path
+        self.problem_path = problem_name
         self.env_name = self.problem_path.split('-')[0]
 
         self.services = None
@@ -36,7 +36,6 @@ class StochasticSmartReplanner(Executor):
         self.active_goal = None
 
         self.weights = defaultdict(partial(defaultdict, partial(defaultdict, int)))
-        # self.weights = defaultdict(float)
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         self.state_action_transition_count = defaultdict(partial(defaultdict, int))
 
@@ -197,19 +196,18 @@ class StochasticSmartReplanner(Executor):
 
         next_state_occurence_dict = self.transitions[state_hash][action]
         state_probabilities = defaultdict(float)
-
         for next_state_hash in next_state_occurence_dict:
             count = next_state_occurence_dict[next_state_hash]
-            # if count == 0:
-            #     state_probabilities[next_state_hash] = 1
-            # else:
-            state_probabilities[next_state_hash] = (count / next_action_state_occurence)
+            if count < 5:
+                state_probabilities[next_state_hash] = 1
+            else:
+                state_probabilities[next_state_hash] = (count / next_action_state_occurence)
 
         weighted_future_returns = list()
-        for state_hash in state_probabilities:
+        for next_state_hash in state_probabilities:
             prev_action_weight = max(self.weights[state_hash][action].values())
             next_state = my_apply_action_to_state(state, action, self.services.parser)
-            weighted_future_returns.append(self.get_max_q_value(next_state, lookahead - 1, prev_action_weight) * state_probabilities[state_hash])
+            weighted_future_returns.append(self.get_max_q_value(next_state, lookahead - 1, prev_action_weight) * state_probabilities[next_state_hash])
 
         return sum(weighted_future_returns)
 
