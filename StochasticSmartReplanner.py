@@ -144,7 +144,7 @@ class StochasticSmartReplanner(Executor):
 
         for action in self.plan:
             curr_state_hash = encode_state(curr_state)
-            self.weights[curr_state_hash][action] = 1
+            self.weights[curr_state_hash][action.lower()] = 1
             curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
 
     def choose(self, state):
@@ -152,17 +152,19 @@ class StochasticSmartReplanner(Executor):
         return action
 
     def get_max_q_action(self, state, lookahead):
-        prev_action_weight = self.weights[encode_state(self.prev_state_hash)][self.prev_action]
+        prev_action_weight = self.weights[self.prev_state_hash][self.prev_action]
         return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
     def _compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
         state_hash = encode_state(state)
         predicted_returns = defaultdict(float)
-        actions = self.valid_actions_getter(state)
+        actions = self.valid_actions_getter.get(state)
         for action in actions:
+            # expansion...
             edge_weight = prev_action_weight * self.off_plan_punish_factor
-            if self.weights[encode_state(state_hash)][action] == 0 or self.weights[encode_state(state_hash)][action] < edge_weight:
-                self.weights[encode_state(state_hash)][action] = edge_weight
+            if self.weights[state_hash][action] == 0 or self.weights[state_hash][action] < edge_weight:
+                self.weights[state_hash][action] = edge_weight
+
             q_s_a = self.get_q_value(state, action, lookahead)
             predicted_returns[action] = q_s_a
 
@@ -186,28 +188,29 @@ class StochasticSmartReplanner(Executor):
         return q_val
 
     def _compute_expected_future_return(self, state, action, lookahead):
-        state_index = self.states.index(state)
-        next_action_state_occurence = self.state_action_transition_count[state_index][action]
+        state_hash = encode_state(state)
+        next_action_state_occurence = self.state_action_transition_count[state_hash][action]
 
-        next_state_occurence_dict = self.transitions[self.states.index(state)][action]
-        state_weights = defaultdict(float)
-        if next_action_state_occurence >= self.known_threshold:
-            normal = float(sum(next_state_occurence_dict.values()))
-            for next_state in next_state_occurence_dict:
-                count = next_state_occurence_dict[next_state]
-                state_weights[next_state] = (count / normal)
-        else:
-            for next_state in next_state_occurence_dict:
-                state_weights[next_state] = 1
+        next_state_occurence_dict = self.transitions[state_hash][action]
+        state_probabilities = defaultdict(float)
+
+        for next_state_hash in next_state_occurence_dict:
+            count = next_state_occurence_dict[next_state_hash]
+            if count == 0:
+                state_probabilities[next_state_hash] = 1
+            else:
+                state_probabilities[next_state_hash] = (count / next_action_state_occurence)
 
         weighted_future_returns = list()
-        for state_index in state_weights:
-            weighted_future_returns.append(self.get_max_q_value(self.states[state_index], lookahead - 1) * state_weights[state_index])
+        for state_hash in state_probabilities:
+            prev_action_weight = self.weights[state_hash][action]
+            next_state = my_apply_action_to_state(state, action, self.services.parser)
+            weighted_future_returns.append(self.get_max_q_value(next_state, lookahead - 1, prev_action_weight) * state_probabilities[state_hash])
 
         return sum(weighted_future_returns)
 
-    def get_max_q_value(self, state, lookahead):
-        return self._compute_max_qval_action_pair(state, lookahead)[0]
+    def get_max_q_value(self, state, lookahead, prev_action_weight):
+        return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[0]
 
     def _get_reward(self, state, action):
         state_hash = encode_state(state)
