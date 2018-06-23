@@ -1,4 +1,6 @@
+import copy
 import os
+import random
 from collections import defaultdict
 from functools import partial
 
@@ -23,6 +25,9 @@ class StochasticSmartReplanner(Executor):
         self.plan = None
         self.is_off_plan = True
         self.steps_off_plan = None
+        self.off_plan_punish_factor = 0.1
+        self.lookahead = 4
+        self.gamma = 0.9
 
         self.hash_visited_states = set()
         self.prev_state_hash = None
@@ -30,8 +35,8 @@ class StochasticSmartReplanner(Executor):
         self.uncompleted_goals = None
         self.active_goal = None
 
-        # self.weights = defaultdict(partial(defaultdict, list))
-        self.weights = defaultdict(float)
+        self.weights = defaultdict(partial(defaultdict, int))
+        # self.weights = defaultdict(float)
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         self.state_action_transition_count = defaultdict(partial(defaultdict, int))
 
@@ -51,7 +56,7 @@ class StochasticSmartReplanner(Executor):
 
     def next_action(self):
         state = self.services.perception.get_state()
-        hash_state = encode_state(state)
+        state_hash = encode_state(state)
 
         # check if done
         self.check_goals(state)
@@ -62,13 +67,24 @@ class StochasticSmartReplanner(Executor):
             return None
 
         # remember
-        if hash_state not in self.hash_visited_states:
+        if state_hash not in self.hash_visited_states:
             self.hash_visited_states.add(encode_state(state))
-        self.update(self.prev_state_hash, self.prev_action, hash_state)
+        self.update(self.prev_state_hash, self.prev_action, state_hash)
 
 
         # choose
         applicable_actions = self.valid_actions_getter.get(state)
+
+        if self.plan is not None and len(self.plan) > 0:
+            # if state_hash == self.prev_state_hash:
+            action = self.choose(state)
+
+            t=9
+            self.prev_action = action
+            self.prev_state_hash = state_hash
+            return self.prev_action
+
+
         possible_next_states = defaultdict(None)
         for applicable_action in applicable_actions:
             next_state = my_apply_action_to_state(state, applicable_action, self.services.parser)
@@ -83,19 +99,15 @@ class StochasticSmartReplanner(Executor):
             return None
 
         if len(actions_leading_to_not_seen_states) == 1:
-            self.prev_state_hash = hash_state
+            self.prev_state_hash = state_hash
             self.prev_action = actions_leading_to_not_seen_states.pop(0)
             return self.prev_action
 
         if self.plan is None:
-            self.make_plan()
-
-        if len(self.plan) > 0:
+            self.make_plan(state)
+            self.prev_state_hash = state_hash
             self.prev_action = self.plan.pop(0).lower()
             return self.prev_action
-
-
-
 
 
         return None
@@ -120,27 +132,92 @@ class StochasticSmartReplanner(Executor):
             self.active_goal = None
             self.hash_visited_states = set()
             self.plan = None
+            self.weights = defaultdict(partial(defaultdict, int))
 
-    def make_plan(self):
+    def make_plan(self, state):
+        curr_state = copy.deepcopy(state)
         if self.active_goal is None:
             self.active_goal = self.uncompleted_goals[0]
 
-        problem_path = self.services.problem_generator.generate_problem(
-            self.active_goal, self.services.perception.get_state())
-        self.plan = self.services.planner(self.services.pddl.domain_path, problem_path)
+        problem = self.services.problem_generator.generate_problem(self.active_goal, curr_state)
+        self.plan = self.services.planner(self.services.pddl.domain_path, problem)
 
         for action in self.plan:
-            self.weights[action] = 1
+            curr_state_hash = encode_state(curr_state)
+            self.weights[curr_state_hash][action] = 1
+            curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
 
+    def choose(self, state):
+        action = self.get_max_q_action(state, self.lookahead)
+        return action
 
+    def get_max_q_action(self, state, lookahead):
+        prev_action_weight = self.weights[encode_state(self.prev_state_hash)][self.prev_action]
+        return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
+    def _compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
+        state_hash = encode_state(state)
+        predicted_returns = defaultdict(float)
+        actions = self.valid_actions_getter(state)
+        for action in actions:
+            edge_weight = prev_action_weight * self.off_plan_punish_factor
+            if self.weights[encode_state(state_hash)][action] == 0 or self.weights[encode_state(state_hash)][action] < edge_weight:
+                self.weights[encode_state(state_hash)][action] = edge_weight
+            q_s_a = self.get_q_value(state, action, lookahead)
+            predicted_returns[action] = q_s_a
 
+        max_q_val = max(predicted_returns.values())
+        best_actions = list()
+        for action_name in predicted_returns:
+            if predicted_returns[action_name] == max_q_val:
+                best_actions.append(action_name)
 
+        best_action = random.choice(best_actions)
+
+        return max_q_val, best_action
+
+    def get_q_value(self, state, action, lookahead):
+        if lookahead <= 0 or len(self.valid_actions_getter.get(state)) == 0:
+            return self._get_reward(state, action)
+
+        expected_future_return = self.gamma * self._compute_expected_future_return(state, action, lookahead)
+        q_val = self._get_reward(state, action) + expected_future_return
+
+        return q_val
+
+    def _compute_expected_future_return(self, state, action, lookahead):
+        state_index = self.states.index(state)
+        next_action_state_occurence = self.state_action_transition_count[state_index][action]
+
+        next_state_occurence_dict = self.transitions[self.states.index(state)][action]
+        state_weights = defaultdict(float)
+        if next_action_state_occurence >= self.known_threshold:
+            normal = float(sum(next_state_occurence_dict.values()))
+            for next_state in next_state_occurence_dict:
+                count = next_state_occurence_dict[next_state]
+                state_weights[next_state] = (count / normal)
+        else:
+            for next_state in next_state_occurence_dict:
+                state_weights[next_state] = 1
+
+        weighted_future_returns = list()
+        for state_index in state_weights:
+            weighted_future_returns.append(self.get_max_q_value(self.states[state_index], lookahead - 1) * state_weights[state_index])
+
+        return sum(weighted_future_returns)
+
+    def get_max_q_value(self, state, lookahead):
+        return self._compute_max_qval_action_pair(state, lookahead)[0]
+
+    def _get_reward(self, state, action):
+        state_hash = encode_state(state)
+        reward = self.weights[state_hash][action]
+        return reward
 
 
 domain_path = "domain.pddl"
-# problem_path = "t_5_5_5_multiple.pddl"
-problem_path = "failing_actions_example.pddl"
+problem_path = "t_5_5_5_multiple.pddl"
+# problem_path = "failing_actions_example.pddl"
 # domain_path = "freecell_domain.pddl"
 # problem_path = "freecell_problem.pddl"
 # domain_path = sys.argv[1]

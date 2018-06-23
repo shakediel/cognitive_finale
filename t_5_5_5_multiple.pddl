@@ -19,6 +19,8 @@
 	d3
 	d4
 	)
+(:fails ((at person1 c3) (move-north) 0.9)
+    )
 (:init
 	(empty start_tile)
 	(empty c0)

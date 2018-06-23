@@ -5,8 +5,6 @@ from functools import partial
 import hashlib
 import json
 
-import pickle
-
 
 def my_apply_action_to_state(orig_state, action, parser):
     state = copy.deepcopy(orig_state)

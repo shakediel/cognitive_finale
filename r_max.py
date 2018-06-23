@@ -70,18 +70,8 @@ class My_Executer(Executor):
         if state is None:
             state = self.services.perception.get_state()
 
-        reward = 0
-        if self.prev_state_valid_actions is not None:
-            if not any(self.prev_action in action for action in self.prev_state_valid_actions):
-                reward -= self.bad_action_punish
-        else:
-            if state in self.visited_states:
-                reward -= self.state_recurrence_punish
-            else:
-                reward += self.state_discovery_reward[self.states.index(state)]
-                self.visited_states.append(state)
-
-        action_name = self.choose(state, reward)
+        self.update(self.prev_state, self.prev_action, state)
+        action_name = self.choose(state)
 
         self.prev_state = state
         self.prev_action = action_name
@@ -96,17 +86,23 @@ class My_Executer(Executor):
 
         return action
 
-    def choose(self, state, reward):
-        self.update(self.prev_state, self.prev_action, reward, state)
-
+    def choose(self, state):
         action = self.get_max_q_action(state, self.lookahead)
-
-        self.prev_action = action
-        self.prev_state = state
 
         return action
 
-    def update(self, state, action, reward, next_state):
+    def update(self, state, action, next_state):
+        reward = 0
+        if self.prev_state_valid_actions is not None:
+            if not any(self.prev_action in action for action in self.prev_state_valid_actions):
+                reward -= self.bad_action_punish
+        else:
+            if state in self.visited_states:
+                reward -= self.state_recurrence_punish
+            else:
+                reward += self.state_discovery_reward[self.states.index(state)]
+                self.visited_states.append(state)
+
         if state is not None and action is not None:
             state_index = self.states.index(state)
             next_state_index = self.states.index(next_state)
