@@ -104,8 +104,11 @@ class StochasticSmartReplanner(Executor):
 
         if self.plan is None:
             self.make_plan(state)
+
+            action = self.choose(state)
+
             self.prev_state_hash = state_hash
-            self.prev_action = self.plan[0].lower()
+            self.prev_action = action
             return self.prev_action
 
         return None
