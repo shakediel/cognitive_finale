@@ -11,7 +11,7 @@ from pddlsim.local_simulator import LocalSimulator
 import sys
 
 from my_valid_actions_getter import MyValidActionsGetter
-from utils import my_apply_action_to_state, encode_state
+from utils import my_apply_action_to_state, encode_state, save_obj, load_obj
 
 
 class StochasticSmartReplanner(Executor):
@@ -24,10 +24,9 @@ class StochasticSmartReplanner(Executor):
 
         self.plan = None
         self.is_off_plan = True
-        self.steps_off_plan = None
         self.off_plan_punish_factor = 0.1
         self.state_recurrence_punish = 0.1
-        self.lookahead = 4
+        self.lookahead = 3
         self.gamma = 0.9
         self.known_threshold = 1
         self.last_in_plan_transition_weight = 0
@@ -52,9 +51,9 @@ class StochasticSmartReplanner(Executor):
         self.uncompleted_goals = self.services.goal_tracking.uncompleted_goals
 
         if os.path.exists(self.env_name + "_transitions"):
-            self.transitions = self.load_obj(self.env_name + "_transitions")
+            self.transitions = load_obj(self.env_name + "_transitions")
         if os.path.exists(self.env_name + "_state_action_transition_count"):
-            self.state_action_transition_count = self.load_obj(self.env_name + "_state_action_transition_count")
+            self.state_action_transition_count = load_obj(self.env_name + "_state_action_transition_count")
 
     def next_action(self):
         state = self.services.perception.get_state()
@@ -63,8 +62,8 @@ class StochasticSmartReplanner(Executor):
         # check if done
         self.check_goals(state)
         if len(self.uncompleted_goals) == 0:
-            self.save_obj(self.transitions, self.env_name + "_transitions")
-            self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
+            save_obj(self.transitions, self.env_name + "_transitions")
+            save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
             return None
 
         # remember
@@ -74,7 +73,6 @@ class StochasticSmartReplanner(Executor):
         if self.plan is not None:
             if self.prev_action.upper() not in self.plan and\
                             self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
-                # self.make_plan(state)
                 self.plan = None
 
         if self.plan is not None:
@@ -135,12 +133,6 @@ class StochasticSmartReplanner(Executor):
             self.state_action_transition_count[state_hash][action] += 1
             self.state_action_rewards_count[state_hash][action] += 1
 
-    def save_obj(self, obj, name):
-        pickle.dump(obj, open(name, 'w'))
-
-    def load_obj(self, name):
-        return pickle.load(open(name))
-
     def check_goals(self, state):
         for goal_condition in self.uncompleted_goals:
             if goal_condition.test(state):
@@ -159,6 +151,7 @@ class StochasticSmartReplanner(Executor):
 
         problem = self.services.problem_generator.generate_problem(self.active_goal, curr_state)
         self.plan = self.services.planner(self.services.pddl.domain_path, problem)
+        self.last_in_plan_transition_weight = 0
 
         for i in range(len(self.plan)):
             action = self.plan[i]
@@ -173,7 +166,6 @@ class StochasticSmartReplanner(Executor):
         return action
 
     def get_max_q_action(self, state, lookahead):
-        # expected_next_state = my_apply_action_to_state(self.prev_state)
         prev_action_weight = self.weights[self.prev_state_hash][self.prev_action]
         return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
@@ -183,7 +175,6 @@ class StochasticSmartReplanner(Executor):
         actions = self.valid_actions_getter.get(state)
         for action in actions:
             # expansion...
-            # todo: only expand if next expected state was not seen
             edge_weight = prev_action_weight * self.off_plan_punish_factor
             if self.weights[state_hash][action] == 0 or self.weights[state_hash][action] < edge_weight:
                 self.weights[state_hash][action] = edge_weight
@@ -212,16 +203,16 @@ class StochasticSmartReplanner(Executor):
 
     def _compute_expected_future_return(self, state, action, lookahead):
         state_hash = encode_state(state)
-        next_action_state_occurence = self.state_action_transition_count[state_hash][action]
+        next_action_state_occurrence = self.state_action_transition_count[state_hash][action]
 
-        next_state_occurence_dict = self.transitions[state_hash][action]
+        next_state_occurrence_dict = self.transitions[state_hash][action]
         state_probabilities = defaultdict(float)
-        for next_state_hash in next_state_occurence_dict:
-            count = next_state_occurence_dict[next_state_hash]
+        for next_state_hash in next_state_occurrence_dict:
+            count = next_state_occurrence_dict[next_state_hash]
             if count < 5:
                 state_probabilities[next_state_hash] = 1
             else:
-                state_probabilities[next_state_hash] = (count / next_action_state_occurence)
+                state_probabilities[next_state_hash] = (count / next_action_state_occurrence)
 
         weighted_future_returns = list()
         for next_state_hash in state_probabilities:
@@ -236,7 +227,6 @@ class StochasticSmartReplanner(Executor):
 
     def _get_reward(self, state, action):
         state_hash = encode_state(state)
-        # reward = max(self.weights[state_hash][action].values())
         if self.state_action_rewards_count[state_hash][action] >= self.known_threshold:
             state_action_rewards = self.rewards[state_hash][action]
             reward = float(sum(state_action_rewards)) / len(state_action_rewards)
@@ -246,12 +236,12 @@ class StochasticSmartReplanner(Executor):
         return reward
 
 
-domain_path = "domain.pddl"
+# domain_path = "domain.pddl"
 # problem_path = "t_5_5_5_multiple.pddl"
-problem_path = "ahinoam_problem.pddl"
+# problem_path = "ahinoam_problem.pddl"
 # problem_path = "failing_actions_example.pddl"
-# domain_path = "freecell_domain.pddl"
-# problem_path = "freecell_problem.pddl"
+domain_path = "freecell_domain.pddl"
+problem_path = "freecell_problem.pddl"
 # domain_path = sys.argv[1]
 # problem_path = sys.argv[2]
 print(LocalSimulator(local).run(domain_path, problem_path,

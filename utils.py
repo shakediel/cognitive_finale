@@ -5,6 +5,8 @@ from functools import partial
 import hashlib
 import json
 
+import pickle
+
 
 def my_apply_action_to_state(orig_state, action, parser):
     state = copy.deepcopy(orig_state)
@@ -87,3 +89,11 @@ def encode_state(state):
 
     json_representation = json.dumps(copied_state, sort_keys=True)
     return hashlib.sha1(json_representation).hexdigest()
+
+
+def save_obj(obj, name):
+    pickle.dump(obj, open(name, 'w'))
+
+
+def load_obj(name):
+    return pickle.load(open(name))
