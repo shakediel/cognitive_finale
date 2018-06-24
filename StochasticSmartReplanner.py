@@ -26,18 +26,22 @@ class StochasticSmartReplanner(Executor):
         self.is_off_plan = True
         self.steps_off_plan = None
         self.off_plan_punish_factor = 0.1
+        self.state_recurrence_punish = 0.1
         self.lookahead = 4
         self.gamma = 0.9
+        self.known_threshold = 1
 
-        self.hash_visited_states = set()
+        self.visited_states_hash = set()
         self.prev_state_hash = None
         self.prev_action = None
         self.uncompleted_goals = None
         self.active_goal = None
 
-        self.weights = defaultdict(partial(defaultdict, partial(defaultdict, int)))
+        self.weights = defaultdict(partial(defaultdict, int))
         self.transitions = defaultdict(partial(defaultdict, partial(defaultdict, int)))
         self.state_action_transition_count = defaultdict(partial(defaultdict, int))
+        self.rewards = defaultdict(partial(defaultdict, list))
+        self.state_action_rewards_count = defaultdict(partial(defaultdict, int))
 
         self.valid_actions_getter = None
 
@@ -50,8 +54,6 @@ class StochasticSmartReplanner(Executor):
             self.transitions = self.load_obj(self.env_name + "_transitions")
         if os.path.exists(self.env_name + "_state_action_transition_count"):
             self.state_action_transition_count = self.load_obj(self.env_name + "_state_action_transition_count")
-        if os.path.exists(self.problem_path + "_weights"):
-            self.weights = self.load_obj(self.problem_path + "_weights")
 
     def next_action(self):
         state = self.services.perception.get_state()
@@ -62,20 +64,19 @@ class StochasticSmartReplanner(Executor):
         if len(self.uncompleted_goals) == 0:
             self.save_obj(self.transitions, self.env_name + "_transitions")
             self.save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
-            self.save_obj(self.weights, self.problem_path + "_weights")
             return None
 
         # remember
-        if state_hash not in self.hash_visited_states:
-            self.hash_visited_states.add(encode_state(state))
         self.update(self.prev_state_hash, self.prev_action, state_hash)
 
 
         # choose
         applicable_actions = self.valid_actions_getter.get(state)
 
-        if self.plan is not None and len(self.plan) > 0:
-            # if state_hash == self.prev_state_hash:
+        if self.plan is not None:
+            if self.prev_action.upper() not in self.plan and self.weights[self.prev_state_hash][self.prev_action] <= self.off_plan_punish_factor ** self.lookahead:
+                self.make_plan(state)
+
             action = self.choose(state)
 
             t=9
@@ -83,13 +84,12 @@ class StochasticSmartReplanner(Executor):
             self.prev_state_hash = state_hash
             return self.prev_action
 
-
         possible_next_states = defaultdict(None)
         for applicable_action in applicable_actions:
             next_state = my_apply_action_to_state(state, applicable_action, self.services.parser)
             possible_next_states[applicable_action] = encode_state(next_state)
 
-        actions_leading_to_not_seen_states = filter(lambda action_key: possible_next_states[action_key] not in self.hash_visited_states, possible_next_states)
+        actions_leading_to_not_seen_states = filter(lambda action_key: possible_next_states[action_key] not in self.visited_states_hash, possible_next_states)
 
         # todo: this is not a good option, but i dont think theres any choice here - backtrack?
         if len(actions_leading_to_not_seen_states) == 0:
@@ -105,15 +105,24 @@ class StochasticSmartReplanner(Executor):
         if self.plan is None:
             self.make_plan(state)
             self.prev_state_hash = state_hash
-            self.prev_action = self.plan.pop(0).lower()
+            self.prev_action = self.plan[0].lower()
             return self.prev_action
 
         return None
 
     def update(self, state_hash, action, next_state_hash):
         if state_hash is not None and action is not None:
+            reward = 0
+            if next_state_hash in self.visited_states_hash:
+                reward -= self.state_recurrence_punish
+            else:
+                reward += self.weights[state_hash][action]
+                self.visited_states_hash.add(state_hash)
+
+            self.rewards[state_hash][action] += [reward]
             self.transitions[state_hash][action][next_state_hash] += 1
             self.state_action_transition_count[state_hash][action] += 1
+            self.state_action_rewards_count[state_hash][action] += 1
 
     def save_obj(self, obj, name):
         pickle.dump(obj, open(name, 'w'))
@@ -128,9 +137,9 @@ class StochasticSmartReplanner(Executor):
 
         if self.active_goal is not None and self.active_goal.test(state):
             self.active_goal = None
-            self.hash_visited_states = set()
+            self.visited_states_hash = set()
             self.plan = None
-            self.weights = defaultdict(partial(defaultdict, partial(defaultdict, int)))
+            self.weights = defaultdict(partial(defaultdict, int))
 
     def make_plan(self, state):
         curr_state = copy.deepcopy(state)
@@ -142,9 +151,8 @@ class StochasticSmartReplanner(Executor):
 
         for action in self.plan:
             curr_state_hash = encode_state(curr_state)
-            expected_next_state = my_apply_action_to_state(curr_state, action, self.services.parser)
-            self.weights[curr_state_hash][action.lower()][encode_state(expected_next_state)] = 1
-            curr_state = expected_next_state
+            self.weights[curr_state_hash][action.lower()] = 1
+            curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
 
     def choose(self, state):
         action = self.get_max_q_action(state, self.lookahead)
@@ -152,7 +160,7 @@ class StochasticSmartReplanner(Executor):
 
     def get_max_q_action(self, state, lookahead):
         # expected_next_state = my_apply_action_to_state(self.prev_state)
-        prev_action_weight = max(self.weights[self.prev_state_hash][self.prev_action].values())
+        prev_action_weight = self.weights[self.prev_state_hash][self.prev_action]
         return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
     def _compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
@@ -163,10 +171,8 @@ class StochasticSmartReplanner(Executor):
             # expansion...
             # todo: only expand if next expected state was not seen
             edge_weight = prev_action_weight * self.off_plan_punish_factor
-            expected_next_state = my_apply_action_to_state(state, action, self.services.parser)
-            expected_next_state_hash = encode_state(expected_next_state)
-            if self.weights[state_hash][action][expected_next_state_hash] == 0 or self.weights[state_hash][action][expected_next_state_hash] < edge_weight:
-                self.weights[state_hash][action][expected_next_state_hash] = edge_weight
+            if self.weights[state_hash][action] == 0 or self.weights[state_hash][action] < edge_weight:
+                self.weights[state_hash][action] = edge_weight
 
             q_s_a = self.get_q_value(state, action, lookahead)
             predicted_returns[action] = q_s_a
@@ -205,7 +211,7 @@ class StochasticSmartReplanner(Executor):
 
         weighted_future_returns = list()
         for next_state_hash in state_probabilities:
-            prev_action_weight = max(self.weights[state_hash][action].values())
+            prev_action_weight = self.weights[state_hash][action]
             next_state = my_apply_action_to_state(state, action, self.services.parser)
             weighted_future_returns.append(self.get_max_q_value(next_state, lookahead - 1, prev_action_weight) * state_probabilities[next_state_hash])
 
@@ -216,7 +222,13 @@ class StochasticSmartReplanner(Executor):
 
     def _get_reward(self, state, action):
         state_hash = encode_state(state)
-        reward = max(self.weights[state_hash][action].values())
+        # reward = max(self.weights[state_hash][action].values())
+        if self.state_action_rewards_count[state_hash][action] >= self.known_threshold:
+            state_action_rewards = self.rewards[state_hash][action]
+            reward = float(sum(state_action_rewards)) / len(state_action_rewards)
+        else:
+            # for exploration
+            reward = 1
         return reward
 
 
