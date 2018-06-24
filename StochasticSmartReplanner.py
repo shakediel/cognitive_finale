@@ -30,6 +30,7 @@ class StochasticSmartReplanner(Executor):
         self.lookahead = 4
         self.gamma = 0.9
         self.known_threshold = 1
+        self.last_in_plan_transition_weight = 0
 
         self.visited_states_hash = set()
         self.prev_state_hash = None
@@ -69,21 +70,25 @@ class StochasticSmartReplanner(Executor):
         # remember
         self.update(self.prev_state_hash, self.prev_action, state_hash)
 
-
         # choose
-        applicable_actions = self.valid_actions_getter.get(state)
+        if self.plan is not None:
+            if self.prev_action.upper() not in self.plan and\
+                            self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
+                # self.make_plan(state)
+                self.plan = None
 
         if self.plan is not None:
-            if self.prev_action.upper() not in self.plan and self.weights[self.prev_state_hash][self.prev_action] <= self.off_plan_punish_factor ** self.lookahead:
+            if self.prev_action.upper() not in self.plan and\
+                            self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
                 self.make_plan(state)
 
             action = self.choose(state)
 
-            t=9
             self.prev_action = action
             self.prev_state_hash = state_hash
             return self.prev_action
 
+        applicable_actions = self.valid_actions_getter.get(state)
         possible_next_states = defaultdict(None)
         for applicable_action in applicable_actions:
             next_state = my_apply_action_to_state(state, applicable_action, self.services.parser)
@@ -115,6 +120,9 @@ class StochasticSmartReplanner(Executor):
 
     def update(self, state_hash, action, next_state_hash):
         if state_hash is not None and action is not None:
+            if self.plan is not None and action.upper() in self.plan:
+                self.last_in_plan_transition_weight = self.weights[state_hash][action]
+
             reward = 0
             if next_state_hash in self.visited_states_hash:
                 reward -= self.state_recurrence_punish
@@ -152,9 +160,12 @@ class StochasticSmartReplanner(Executor):
         problem = self.services.problem_generator.generate_problem(self.active_goal, curr_state)
         self.plan = self.services.planner(self.services.pddl.domain_path, problem)
 
-        for action in self.plan:
+        for i in range(len(self.plan)):
+            action = self.plan[i]
             curr_state_hash = encode_state(curr_state)
-            self.weights[curr_state_hash][action.lower()] = 1
+            weight = float(i + 1) / len(self.plan)
+            if self.weights[curr_state_hash][action.lower()] < weight:
+                self.weights[curr_state_hash][action.lower()] = weight
             curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
 
     def choose(self, state):
