@@ -26,7 +26,7 @@ class StochasticSmartReplanner(Executor):
         self.state_recurrence_punish = 0.1
         self.lookahead = 4
         self.gamma = 0.5
-        self.known_threshold = 30
+        self.known_threshold = 100
         self.last_in_plan_transition_weight = 0
 
         self.visited_states_hash = set()
@@ -54,6 +54,7 @@ class StochasticSmartReplanner(Executor):
             self.state_action_transition_count = load_obj(self.env_name + "_state_action_transition_count")
 
     def next_action(self):
+        # perception
         state = self.services.perception.get_state()
         state_hash = encode_state(state)
 
@@ -72,7 +73,6 @@ class StochasticSmartReplanner(Executor):
             if self.prev_action.upper() not in self.plan and\
                             self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
                 self.plan = None
-                self.lookahead = 4
 
         if self.plan is not None:
             action = self.choose(state)
@@ -89,14 +89,11 @@ class StochasticSmartReplanner(Executor):
 
         actions_leading_to_not_seen_states = filter(lambda action_key: possible_next_states[action_key] not in self.visited_states_hash, possible_next_states)
 
-        # todo: this is not a good option, but i dont think theres any choice here - backtrack?
         if len(actions_leading_to_not_seen_states) == 0:
             self.prev_state_hash = None
             self.prev_action = None
             self.visited_states_hash = set()
             self.plan = None
-            self.lookahead = 4
-            # self.weights = defaultdict(partial(defaultdict, int))
             return self.next_action()
 
         if len(actions_leading_to_not_seen_states) == 1:
@@ -151,7 +148,6 @@ class StochasticSmartReplanner(Executor):
 
         problem = self.services.problem_generator.generate_problem(self.active_goal, curr_state)
         self.plan = self.services.planner(self.services.pddl.domain_path, problem)
-        self.last_in_plan_transition_weight = 0
 
         for i in range(len(self.plan)):
             action = self.plan[i]
@@ -166,7 +162,6 @@ class StochasticSmartReplanner(Executor):
             vals = list(self.weights[state_hash].values())
             local_weights.extend(vals)
         self.state_recurrence_punish = median(local_weights)
-        # self.state_recurrence_punish = max(local_weights)
         self.lookahead = min([4, int(len(self.plan) / 2)])
 
     def choose(self, state):
@@ -186,9 +181,6 @@ class StochasticSmartReplanner(Executor):
             edge_weight = prev_action_weight * self.off_plan_punish_factor
             if self.weights[state_hash][action] < edge_weight:
                 self.weights[state_hash][action] = edge_weight
-            # expected_next_state = my_apply_action_to_state(state, action, self.services.parser)
-            # expected_next_state_hash = encode_state(expected_next_state)
-            # self.transitions[state_hash][action][expected_next_state_hash]
 
         for action in actions:
             q_s_a = self.get_q_value(state, action, lookahead)
@@ -247,14 +239,14 @@ class StochasticSmartReplanner(Executor):
         return reward
 
 
-domain_path = "domain.pddl"
-problem_path = "t_5_5_5_multiple.pddl"
+# domain_path = "domain.pddl"
+# problem_path = "t_5_5_5_multiple.pddl"
 # problem_path = "ahinoam_problem.pddl"
 # problem_path = "failing_actions_example.pddl"
 # domain_path = "freecell_domain.pddl"
 # problem_path = "freecell_problem.pddl"
-# domain_path = "rover_domain.pddl"
-# problem_path = "rover_problem.pddl"
+domain_path = "rover_domain.pddl"
+problem_path = "rover_problem.pddl"
 # domain_path = "satellite_domain.pddl"
 # problem_path = "satellite_problem.pddl"
 # domain_path = sys.argv[1]
