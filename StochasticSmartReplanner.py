@@ -184,7 +184,7 @@ class StochasticSmartReplanner(Executor):
                 self.weights[state_hash][action] = edge_weight
             expected_next_state = my_apply_action_to_state(state, action, self.services.parser)
             expected_next_state_hash = encode_state(expected_next_state)
-            self.transitions[state_hash][action][expected_next_state_hash]
+            # self.transitions[state_hash][action][expected_next_state_hash]
 
         for action in actions:
             q_s_a = self.get_q_value(state, action, lookahead)
@@ -243,14 +243,14 @@ class StochasticSmartReplanner(Executor):
         return reward
 
 
-domain_path = "domain.pddl"
-problem_path = "t_5_5_5_multiple.pddl"
+# domain_path = "domain.pddl"
+# problem_path = "t_5_5_5_multiple.pddl"
 # problem_path = "ahinoam_problem.pddl"
 # problem_path = "failing_actions_example.pddl"
 # domain_path = "freecell_domain.pddl"
 # problem_path = "freecell_problem.pddl"
-# domain_path = "rover_domain.pddl"
-# problem_path = "rover_problem.pddl"
+domain_path = "rover_domain.pddl"
+problem_path = "rover_problem.pddl"
 # domain_path = "satellite_domain.pddl"
 # problem_path = "satellite_problem.pddl"
 # domain_path = sys.argv[1]
