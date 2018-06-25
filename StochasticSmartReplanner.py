@@ -3,15 +3,13 @@ import os
 import random
 from collections import defaultdict
 from functools import partial
-
-import pickle
 from pddlsim.executors.executor import Executor
 from pddlsim.planner import local
 from pddlsim.local_simulator import LocalSimulator
 import sys
 
 from my_valid_actions_getter import MyValidActionsGetter
-from utils import my_apply_action_to_state, encode_state, save_obj, load_obj
+from utils import my_apply_action_to_state, encode_state, save_obj, load_obj, median
 
 
 class StochasticSmartReplanner(Executor):
@@ -27,8 +25,8 @@ class StochasticSmartReplanner(Executor):
         self.off_plan_punish_factor = 0.1
         self.state_recurrence_punish = 0.1
         self.lookahead = 3
-        self.gamma = 0.9
-        self.known_threshold = 1
+        self.gamma = 0.5
+        self.known_threshold = 5
         self.last_in_plan_transition_weight = 0
 
         self.visited_states_hash = set()
@@ -76,10 +74,6 @@ class StochasticSmartReplanner(Executor):
                 self.plan = None
 
         if self.plan is not None:
-            if self.prev_action.upper() not in self.plan and\
-                            self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
-                self.make_plan(state)
-
             action = self.choose(state)
 
             self.prev_action = action
@@ -96,9 +90,12 @@ class StochasticSmartReplanner(Executor):
 
         # todo: this is not a good option, but i dont think theres any choice here - backtrack?
         if len(actions_leading_to_not_seen_states) == 0:
-            self.prev_state_hash = state
+            self.prev_state_hash = None
             self.prev_action = None
-            return None
+            self.visited_states_hash = set()
+            self.plan = None
+            # self.weights = defaultdict(partial(defaultdict, int))
+            return self.next_action()
 
         if len(actions_leading_to_not_seen_states) == 1:
             self.prev_state_hash = state_hash
@@ -161,6 +158,13 @@ class StochasticSmartReplanner(Executor):
                 self.weights[curr_state_hash][action.lower()] = weight
             curr_state = my_apply_action_to_state(curr_state, action, self.services.parser)
 
+        local_weights = list()
+        for state_hash in self.weights:
+            vals = list(self.weights[state_hash].values())
+            local_weights.extend(vals)
+        # self.state_recurrence_punish = median(local_weights)
+        self.state_recurrence_punish = max(local_weights)
+
     def choose(self, state):
         action = self.get_max_q_action(state, self.lookahead)
         return action
@@ -176,9 +180,13 @@ class StochasticSmartReplanner(Executor):
         for action in actions:
             # expansion...
             edge_weight = prev_action_weight * self.off_plan_punish_factor
-            if self.weights[state_hash][action] == 0 or self.weights[state_hash][action] < edge_weight:
+            if self.weights[state_hash][action] < edge_weight:
                 self.weights[state_hash][action] = edge_weight
+            expected_next_state = my_apply_action_to_state(state, action, self.services.parser)
+            expected_next_state_hash = encode_state(expected_next_state)
+            self.transitions[state_hash][action][expected_next_state_hash]
 
+        for action in actions:
             q_s_a = self.get_q_value(state, action, lookahead)
             predicted_returns[action] = q_s_a
 
@@ -203,16 +211,16 @@ class StochasticSmartReplanner(Executor):
 
     def _compute_expected_future_return(self, state, action, lookahead):
         state_hash = encode_state(state)
-        next_action_state_occurrence = self.state_action_transition_count[state_hash][action]
+        state_action_occurrence = self.state_action_transition_count[state_hash][action]
 
         next_state_occurrence_dict = self.transitions[state_hash][action]
         state_probabilities = defaultdict(float)
         for next_state_hash in next_state_occurrence_dict:
-            count = next_state_occurrence_dict[next_state_hash]
-            if count < 5:
+            if state_action_occurrence < self.known_threshold:
                 state_probabilities[next_state_hash] = 1
             else:
-                state_probabilities[next_state_hash] = (count / next_action_state_occurrence)
+                count = next_state_occurrence_dict[next_state_hash]
+                state_probabilities[next_state_hash] = (count / state_action_occurrence)
 
         weighted_future_returns = list()
         for next_state_hash in state_probabilities:
@@ -231,17 +239,20 @@ class StochasticSmartReplanner(Executor):
             state_action_rewards = self.rewards[state_hash][action]
             reward = float(sum(state_action_rewards)) / len(state_action_rewards)
         else:
-            # for exploration
-            reward = 1
+            reward = self.weights[state_hash][action]
         return reward
 
 
-# domain_path = "domain.pddl"
-# problem_path = "t_5_5_5_multiple.pddl"
+domain_path = "domain.pddl"
+problem_path = "t_5_5_5_multiple.pddl"
 # problem_path = "ahinoam_problem.pddl"
 # problem_path = "failing_actions_example.pddl"
-domain_path = "freecell_domain.pddl"
-problem_path = "freecell_problem.pddl"
+# domain_path = "freecell_domain.pddl"
+# problem_path = "freecell_problem.pddl"
+# domain_path = "rover_domain.pddl"
+# problem_path = "rover_problem.pddl"
+# domain_path = "satellite_domain.pddl"
+# problem_path = "satellite_problem.pddl"
 # domain_path = sys.argv[1]
 # problem_path = sys.argv[2]
 print(LocalSimulator(local).run(domain_path, problem_path,

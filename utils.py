@@ -91,6 +91,15 @@ def encode_state(state):
     return hashlib.sha1(json_representation).hexdigest()
 
 
+def median(numbers):
+    numbers = sorted(numbers)
+    center = len(numbers) / 2
+    if len(numbers) % 2 == 0:
+        return sum(numbers[center - 1:center + 1]) / 2.0
+    else:
+        return numbers[center]
+
+
 def save_obj(obj, name):
     pickle.dump(obj, open(name, 'w'))
 
