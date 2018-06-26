@@ -4,9 +4,6 @@ import random
 from collections import defaultdict
 from functools import partial
 from pddlsim.executors.executor import Executor
-from pddlsim.planner import local
-from pddlsim.local_simulator import LocalSimulator
-import sys
 
 from my_valid_actions_getter import MyValidActionsGetter
 from utils import my_apply_action_to_state, encode_state, save_obj, load_obj, median
@@ -58,6 +55,9 @@ class StochasticSmartReplanner(Executor):
         state = self.services.perception.get_state()
         state_hash = encode_state(state)
 
+        # remember
+        self.update(self.prev_state_hash, self.prev_action, state_hash)
+
         # check if done
         self.check_goals(state)
         if len(self.uncompleted_goals) == 0:
@@ -65,13 +65,10 @@ class StochasticSmartReplanner(Executor):
             save_obj(self.state_action_transition_count, self.env_name + "_state_action_transition_count")
             return None
 
-        # remember
-        self.update(self.prev_state_hash, self.prev_action, state_hash)
-
         # choose
         if self.plan is not None:
-            if self.prev_action.upper() not in self.plan and\
-                            self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
+            if self.prev_action.upper() not in self.plan and \
+                                self.weights[self.prev_state_hash][self.prev_action] <= self.last_in_plan_transition_weight * self.off_plan_punish_factor ** self.lookahead:
                 self.plan = None
 
         if self.plan is not None:
@@ -125,9 +122,9 @@ class StochasticSmartReplanner(Executor):
                 self.visited_states_hash.add(state_hash)
 
             self.rewards[state_hash][action] += [reward]
+            self.state_action_rewards_count[state_hash][action] += 1
             self.transitions[state_hash][action][next_state_hash] += 1
             self.state_action_transition_count[state_hash][action] += 1
-            self.state_action_rewards_count[state_hash][action] += 1
 
     def check_goals(self, state):
         for goal_condition in self.uncompleted_goals:
@@ -139,7 +136,9 @@ class StochasticSmartReplanner(Executor):
             self.visited_states_hash = set()
             self.plan = None
             self.lookahead = 4
+            self.last_in_plan_transition_weight = 0
             self.weights = defaultdict(partial(defaultdict, int))
+            self.rewards = defaultdict(partial(defaultdict, list))
 
     def make_plan(self, state):
         curr_state = copy.deepcopy(state)
@@ -170,9 +169,9 @@ class StochasticSmartReplanner(Executor):
 
     def get_max_q_action(self, state, lookahead):
         prev_action_weight = self.weights[self.prev_state_hash][self.prev_action]
-        return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
+        return self.compute_max_qval_action_pair(state, lookahead, prev_action_weight)[1]
 
-    def _compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
+    def compute_max_qval_action_pair(self, state, lookahead, prev_action_weight):
         state_hash = encode_state(state)
         predicted_returns = defaultdict(float)
         actions = self.valid_actions_getter.get(state)
@@ -198,14 +197,14 @@ class StochasticSmartReplanner(Executor):
 
     def get_q_value(self, state, action, lookahead):
         if lookahead <= 0 or len(self.valid_actions_getter.get(state)) == 0:
-            return self._get_reward(state, action)
+            return self.get_reward(state, action)
 
-        expected_future_return = self.gamma * self._compute_expected_future_return(state, action, lookahead)
-        q_val = self._get_reward(state, action) + expected_future_return
+        expected_future_return = self.gamma * self.compute_expected_future_return(state, action, lookahead)
+        q_val = self.get_reward(state, action) + expected_future_return
 
         return q_val
 
-    def _compute_expected_future_return(self, state, action, lookahead):
+    def compute_expected_future_return(self, state, action, lookahead):
         state_hash = encode_state(state)
         state_action_occurrence = self.state_action_transition_count[state_hash][action]
 
@@ -227,9 +226,9 @@ class StochasticSmartReplanner(Executor):
         return sum(weighted_future_returns)
 
     def get_max_q_value(self, state, lookahead, prev_action_weight):
-        return self._compute_max_qval_action_pair(state, lookahead, prev_action_weight)[0]
+        return self.compute_max_qval_action_pair(state, lookahead, prev_action_weight)[0]
 
-    def _get_reward(self, state, action):
+    def get_reward(self, state, action):
         state_hash = encode_state(state)
         if self.state_action_rewards_count[state_hash][action] >= self.known_threshold:
             state_action_rewards = self.rewards[state_hash][action]
@@ -237,19 +236,3 @@ class StochasticSmartReplanner(Executor):
         else:
             reward = self.weights[state_hash][action]
         return reward
-
-
-# domain_path = "domain.pddl"
-# problem_path = "t_5_5_5_multiple.pddl"
-# problem_path = "ahinoam_problem.pddl"
-# problem_path = "failing_actions_example.pddl"
-# domain_path = "freecell_domain.pddl"
-# problem_path = "freecell_problem.pddl"
-# domain_path = "rover_domain.pddl"
-# problem_path = "rover_problem.pddl"
-# domain_path = "satellite_domain.pddl"
-# problem_path = "satellite_problem.pddl"
-domain_path = sys.argv[1]
-problem_path = sys.argv[2]
-print(LocalSimulator(local).run(domain_path, problem_path,
-                                StochasticSmartReplanner(problem_path)))
