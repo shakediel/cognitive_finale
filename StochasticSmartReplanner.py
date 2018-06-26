@@ -25,7 +25,7 @@ class StochasticSmartReplanner(Executor):
         self.off_plan_punish_factor = 0.1
         self.state_recurrence_punish = 0.1
         self.lookahead = 4
-        self.gamma = 0.5
+        self.gamma = 0.8
         self.known_threshold = 100
         self.last_in_plan_transition_weight = 0
 
@@ -245,11 +245,11 @@ class StochasticSmartReplanner(Executor):
 # problem_path = "failing_actions_example.pddl"
 # domain_path = "freecell_domain.pddl"
 # problem_path = "freecell_problem.pddl"
-domain_path = "rover_domain.pddl"
-problem_path = "rover_problem.pddl"
+# domain_path = "rover_domain.pddl"
+# problem_path = "rover_problem.pddl"
 # domain_path = "satellite_domain.pddl"
 # problem_path = "satellite_problem.pddl"
-# domain_path = sys.argv[1]
-# problem_path = sys.argv[2]
+domain_path = sys.argv[1]
+problem_path = sys.argv[2]
 print(LocalSimulator(local).run(domain_path, problem_path,
                                 StochasticSmartReplanner(problem_path)))
